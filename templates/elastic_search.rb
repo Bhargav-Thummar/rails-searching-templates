@@ -10,6 +10,9 @@ require 'uri'
 require 'net/http'
 require 'json'
 
+# ============================================= System Settings ==================================================
+# ======================================== Install Elastic Search Engine =========================================
+
 unless (run 'sudo service elasticsearch status | grep running')
   say_status "ERROR", "Failed to start elasticsearch service \n\n", :red
 
@@ -18,9 +21,6 @@ unless (run 'sudo service elasticsearch status | grep running')
     say_status "INFO", "Installing Elastic Search...---------\n\n", :yellow
     
     run 'sudo apt-get update'
-    # run 'sudo dpkg -i elasticsearch-7.17.deb'
-  
-    # Trying installing with APT after adding Elastic’s package source list...
 
     # Add the public GPG key to APT
     run 'curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -'
@@ -28,14 +28,11 @@ unless (run 'sudo service elasticsearch status | grep running')
     # add the Elastic source list to the sources.list.d directory, where APT will search for new sources
     run 'echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list'
 
-    # run 'sudo apt-get update'
-
     # Install Elasticsearch with this command
     run 'sudo apt install elasticsearch'
 
     # Configuring Elasticsearch
     unless (run "sudo cat /etc/elasticsearch/elasticsearch.yml | grep 'network.host: localhost'")
-      # run 'sudo chmod 700 /etc/elasticsearch/elasticsearch.yml'
       run "sudo sed -i -e '1inetwork.host: localhost\' /etc/elasticsearch/elasticsearch.yml"
     end
 
@@ -48,24 +45,33 @@ unless (run 'sudo service elasticsearch status | grep running')
   rescue => e
 
     say_status "INFO", "Installing Elastic Search...---------\n\n"
-    
     exit(1)
   end
 end
 
-# ------------- Check if elasticsearch service is running properly -----------------
+# ==================================================================================================================
 
-# restart the service
+
+
+
+# ======================================= enable/restart the service ===============================================
 run 'sudo service elasticsearch enable'
 run 'sudo service elasticsearch restart'
+# ==================================================================================================================
+
+
+
+
+# ============================== Check if elasticsearch service is running properly ================================
 
 $elasticsearch_url = ENV.fetch('ELASTICSEARCH_URL', 'http://localhost:9200')
 
-# ----- Check for Elasticsearch Engine -------------------------------------------------------------------
-required_elasticsearch_version = '7'
-
 begin
-  cluster_info = Net::HTTP.get(URI.parse($elasticsearch_url))
+  if Net::HTTP.get(URI.parse($elasticsearch_url)).include?("elasticsearch")
+    say_status "INFO", "Elastic Search engine running...---------\n\n"
+  else
+    say_status "ERROR", "Elastic Search engine not running!!!---------\n\n"
+  end
 
 rescue Errno::ECONNREFUSED => e
   say_status "ERROR", "Cannot connect to Elasticsearch on <#{$elasticsearch_url}>\n\n", :red
@@ -76,34 +82,52 @@ rescue StandardError => e
   exit(1)
 end
 
+# ==================================================================================================================
 
-# ----- Add gems into Gemfile ---------------------------------------------------------------------
 
-puts
+
+# =========================================== Rails application Settings ============================================
+# ============================================= Add gems into Gemfile ==============================================
+
 say_status  "Rubygems", "Adding Elasticsearch libraries into Gemfile...\n", :yellow
 
 gem_list = `gem list`.lines
-gem 'elasticsearch'       unless gem_list.grep(/^elasticsearch \(.*\)/)
-gem 'elasticsearch-model' unless gem_list.grep(/^elasticsearch-model \(.*\)/)
-gem 'elasticsearch-rails' unless gem_list.grep(/^elasticsearch-rails \(.*\)/)
+gem 'elasticsearch'       if gem_list.grep(/^elasticsearch \(.*\)/)
+gem 'elasticsearch-model' if gem_list.grep(/^elasticsearch-model \(.*\)/)
+gem 'elasticsearch-rails' if gem_list.grep(/^elasticsearch-rails \(.*\)/)
 
-# ----- Disable asset logging in development ------------------------------------------------------
+# ==================================================================================================================
 
-puts
+
+
+
+# ========================================== Set environment configuration =========================================
+
 say_status  "Application", "Disabling asset logging in development...\n", :yellow
 
 environment 'config.assets.logger = false', env: 'development'
 
-# ----- Install gems ------------------------------------------------------------------------------
+# ==================================================================================================================
+
+
+
+
+
+# ================================================= Install GEMS ===================================================
 
 puts
 say_status  "Rubygems", "Installing Rubygems...", :yellow
 
 run "bundle install"
 
-# ----- Add Elasticsearch integration into the model ----------------------------------------------
+# ==================================================================================================================
 
-puts
+
+
+
+
+# ============================================Add Elasticsearch module =============================================
+
 say_status  "Concern", "Adding elastic search concern", :yellow
 
 file 'app/models/concerns/elastic_searchable.rb', <<-CODE
@@ -134,16 +158,24 @@ end
 
 CODE
 
-# ------------------ Add model names for search functionality ----------------------------------
+# =================================================================================================================
+
+
+
+
+
+# ================================ Add Elasticsearch integration into the interface ===============================
 models = 
   [
-    'User'
+    'Article'
   ]
 
 models.each do |model_name|
   class_name = model_name.underscore
   class_name_pluralize = class_name.pluralize
 
+
+  # ------------------------------------ make require changes in model file -------------------------------------
   puts
   say_status  "Model", "Adding search support into the models...", :yellow
 
@@ -158,9 +190,9 @@ models.each do |model_name|
     CODE
   end
 
-  # ----- Add Elasticsearch integration into the interface ------------------------------------------
 
-  puts
+
+  # ---------------------------------- make require changes in controller file -----------------------------------
   say_status  "Controller", "Adding controller action, route, and HTML for searching...", :yellow
 
   inject_into_file "app/controllers/#{class_name_pluralize}_controller.rb", before: %r|^\s*def index$| do
@@ -182,6 +214,8 @@ models.each do |model_name|
     CODE
   end
 
+
+  # ---------------------------------- make require changes in view file -----------------------------------------
   inject_into_file "app/views/#{class_name_pluralize}/index.html.erb", after: %r{<h1>.*#{model_name.pluralize}</h1>}i do
     <<-CODE
 
@@ -195,16 +229,21 @@ models.each do |model_name|
    CODE
   end
 
-  append_to_file "app/views/#{class_name_pluralize}/index.html.erb" do 
-    "<%= link_to 'All #{model_name.pluralize}', #{class_name_pluralize}_path %>"
-  end
+  # append_to_file "app/views/#{class_name_pluralize}/index.html.erb" do 
+  #   "<%= link_to 'All #{model_name.pluralize}', #{class_name_pluralize}_path %>"
+  # end
 
+
+  # ------------------------------------------- add route for search method --------------------------------------------
   gsub_file 'config/routes.rb', %r{resources :#{class_name_pluralize}$}, <<-CODE
     resources :#{class_name_pluralize} do
       collection { get :search }
     end
   CODE
 
+
+  # ---------------------------------- create index for required fields, import all records ----------------------------
   run  "rails runner '#{model_name}.__elasticsearch__.create_index!'"
   run  "rails runner '#{model_name}.import'"
+
 end
