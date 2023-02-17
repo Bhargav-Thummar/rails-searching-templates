@@ -17,7 +17,7 @@ unless (run 'sudo service elasticsearch status | grep running')
   begin      
     say_status "INFO", "Installing Elastic Search...---------\n\n", :yellow
     
-    # run 'sudo apt-get update'
+    run 'sudo apt-get update'
     # run 'sudo dpkg -i elasticsearch-7.17.deb'
   
     # Trying installing with APT after adding Elastic’s package source list...
@@ -61,7 +61,7 @@ run 'sudo service elasticsearch restart'
 
 $elasticsearch_url = ENV.fetch('ELASTICSEARCH_URL', 'http://localhost:9200')
 
-# ----- Check for Elasticsearch Engine-------------------------------------------------------------------
+# ----- Check for Elasticsearch Engine -------------------------------------------------------------------
 required_elasticsearch_version = '7'
 
 begin
@@ -74,4 +74,137 @@ rescue Errno::ECONNREFUSED => e
 rescue StandardError => e
   say_status "ERROR", "#{e.class}: #{e.message}", :red
   exit(1)
+end
+
+
+# ----- Add gems into Gemfile ---------------------------------------------------------------------
+
+puts
+say_status  "Rubygems", "Adding Elasticsearch libraries into Gemfile...\n", :yellow
+
+gem_list = `gem list`.lines
+gem 'elasticsearch'       unless gem_list.grep(/^elasticsearch \(.*\)/)
+gem 'elasticsearch-model' unless gem_list.grep(/^elasticsearch-model \(.*\)/)
+gem 'elasticsearch-rails' unless gem_list.grep(/^elasticsearch-rails \(.*\)/)
+
+# ----- Disable asset logging in development ------------------------------------------------------
+
+puts
+say_status  "Application", "Disabling asset logging in development...\n", :yellow
+
+environment 'config.assets.logger = false', env: 'development'
+
+# ----- Install gems ------------------------------------------------------------------------------
+
+puts
+say_status  "Rubygems", "Installing Rubygems...", :yellow
+
+run "bundle install"
+
+# ----- Add Elasticsearch integration into the model ----------------------------------------------
+
+puts
+say_status  "Concern", "Adding elastic search concern", :yellow
+
+file 'app/models/concerns/elastic_searchable.rb', <<-CODE
+module ElasticSearchable
+  extend ActiveSupport::Concern
+
+  included do
+    include Elasticsearch::Model
+    include Elasticsearch::Model::Callbacks
+
+    def self.search(query)
+      __elasticsearch__.search(
+        {
+          query: {
+            multi_match: {
+              query: query
+            }
+          }
+        }
+      )
+    end
+
+    after_commit on: [:create, :update] do
+      __elasticsearch__.index_document
+    end
+  end
+end
+
+CODE
+
+# ------------------ Add model names for search functionality ----------------------------------
+models = 
+  [
+    'User'
+  ]
+
+models.each do |model_name|
+  class_name = model_name.underscore
+  class_name_pluralize = class_name.pluralize
+
+  puts
+  say_status  "Model", "Adding search support into the models...", :yellow
+
+  prepend_to_file "app/models/#{class_name}.rb" do 
+    "require 'elasticsearch/model' \n"
+  end
+  
+  inject_into_file "app/models/#{class_name}.rb", after: %r|\s*class #{model_name} < ApplicationRecord$| do
+    <<-CODE
+
+    include ElasticSearchable
+    CODE
+  end
+
+  # ----- Add Elasticsearch integration into the interface ------------------------------------------
+
+  puts
+  say_status  "Controller", "Adding controller action, route, and HTML for searching...", :yellow
+
+  inject_into_file "app/controllers/#{class_name_pluralize}_controller.rb", before: %r|^\s*def index$| do
+    <<-CODE
+
+    def search
+      @#{class_name_pluralize} = 
+        if params[:q].present?
+          #{model_name}.search(params[:q])
+        else
+          #{model_name}.all
+        end
+
+      @#{class_name_pluralize} = @#{class_name_pluralize}.records
+
+      render action: :index
+    end
+
+    CODE
+  end
+
+  inject_into_file "app/views/#{class_name_pluralize}/index.html.erb", after: %r{<h1>.*#{model_name.pluralize}</h1>}i do
+    <<-CODE
+
+   <hr>
+   <%= form_tag search_#{class_name_pluralize}_path, method: 'get' do %>
+     <%= label_tag :query %>
+     <%= text_field_tag :q, params[:q] %>
+     <%= submit_tag :search %>
+   <% end %>
+   <hr>
+   CODE
+  end
+
+  append_to_file "app/views/#{class_name_pluralize}/index.html.erb" do 
+    "<%= link_to 'All #{model_name.pluralize}', #{class_name_pluralize}_path %>"
+  end
+
+  gsub_file 'config/routes.rb', %r{resources :#{class_name_pluralize}$}, <<-CODE
+    resources :#{class_name_pluralize} do
+      collection { get :search }
+    end
+  CODE
+
+  run  "rails runner '#{model_name}.__elasticsearch__.create_index!'"
+  run  "rails runner '#{model_name}.import'"
 end
