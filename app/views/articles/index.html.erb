@@ -1,0 +1,46 @@
+<p style="color: green"><%= notice %></p>
+
+<h1>Articles</h1>
+
+<div id="articles">
+  <table class="table">
+    <thead>
+      <tr>
+        <th scope="col">Title</th>
+        <th scope="col">Content</th>
+        <th scope="col">Published On</th>
+        <th scope="col">Create On</th>
+        <th scope="col">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% @articles.each do |article| %>
+        <tr id="<%= dom_id article %>">
+          <td><%= article.title %></td>
+          <td><%= article.content %></td>
+          <td><%= article.published_on&.strftime(t('date.formats.default')) %></td>
+          <td><%= article.created_at&.strftime(t('date.formats.default')) %></td>
+          <td>
+            <%= link_to "Show", article, class: "mx-1" %> |
+            <%= link_to "Edit", edit_article_path(article), class: "mx-1" %> |
+
+            <%= 
+              link_to "Delete", 
+              article_path(article), 
+              data: 
+                { 
+                  "turbo-method": :delete,
+                   turbo_confirm: 'Are want to delete this article ?'
+                }, 
+              class: "mx-1"
+            %>
+          
+          </td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+</div>
+
+<%= link_to "New article", new_article_path, class: "mx-1" %> |
+<%= link_to 'All Articles', articles_path, class: "mx-1" %>
