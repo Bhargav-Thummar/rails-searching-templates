@@ -6,6 +6,9 @@
 # * Rails >= 7
 # * ElasticSearch version 7.17.9
 
+# =========================================== Execute This Template =================================================
+# rails app:template LOCATION=templates/elastic_search.rb
+
 require 'uri'
 require 'net/http'
 require 'json'
