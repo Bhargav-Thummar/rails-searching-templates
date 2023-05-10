@@ -58,6 +58,11 @@ models.each do |model_name|
     def self.ransackable_attributes(auth_object = nil)
       #{model_name.constantize.column_names.reject {|column| column =~ /id|created_at/i }}
     end
+
+    \n
+    def self.ransackable_associations(auth_object = nil)
+      []
+    end
     CODE
   end
 
@@ -95,7 +100,7 @@ models.each do |model_name|
 
     <hr>
     <%= search_form_for @ransack_object do |f| %>
-      <%= f.text_field :title_cont %>
+      <%= f.text_field :title_or_content_cont %>
       <%= f.submit :search %>
     <% end %>
     <hr>
